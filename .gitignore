@@ -1,0 +1,31 @@
+# ملفات النظام
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# بيئة بايثون الافتراضية
+venv/
+.env/
+.venv/
+env/
+ENV/
+
+# إعدادات المستخدم
+*.log
+*.bak
+
+# إعدادات نظام التشغيل
+.DS_Store
+Thumbs.db
+
+# ملفات خاصة بالمحرر
+.idea/
+.vscode/
+
+# مفاتيح أو كلمات مرور حساسة
+config.json
+*.key
+*.pem
