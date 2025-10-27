@@ -1,0 +1,8 @@
+Flask
+gunicorn
+schedule
+Flask-SQLAlchemy
+Werkzeug
+PyJWT
+APScheduler
+reportlab
