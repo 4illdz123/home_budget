@@ -1,92 +1,89 @@
 from flask import Flask, request, jsonify
-from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
-import smtplib
-import schedule
+import json
 import threading
 import time
+import schedule
+from datetime import datetime
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///budget.db'
-db = SQLAlchemy(app)
 
-# ----------------- جداول قاعدة البيانات -----------------
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100))
-    email = db.Column(db.String(120), unique=True)
-    password = db.Column(db.String(100))
-    balance_dz = db.Column(db.Float, default=0.0)
+USERS_FILE = "users.json"
+EXPENSES_FILE = "expenses.json"
 
-class Purchase(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    item_name = db.Column(db.String(200))
-    price_dz = db.Column(db.Float)
-    category = db.Column(db.String(100))
-    date = db.Column(db.DateTime, default=datetime.now)
+# ======= أدوات مساعدة =======
 
-# ----------------- إنشاء المستخدم -----------------
-@app.route('/register', methods=['POST'])
-def register():
-    data = request.get_json()
-    user = User(
-        name=data['name'],
-        email=data['email'],
-        password=data['password'],
-        balance_dz=data.get('balance_dz', 0)
-    )
-    db.session.add(user)
-    db.session.commit()
-    return jsonify({"message": "User registered successfully!"})
-
-# ----------------- إضافة مشتريات -----------------
-@app.route('/add_purchase', methods=['POST'])
-def add_purchase():
-    data = request.get_json()
-    purchase = Purchase(
-        user_id=data['user_id'],
-        item_name=data['item_name'],
-        price_dz=data['price_dz'],
-        category=data.get('category', 'Other')
-    )
-    db.session.add(purchase)
-    db.session.commit()
-    return jsonify({"message": "Purchase added!"})
-
-# ----------------- الحصول على تقارير -----------------
-@app.route('/get_report/<int:user_id>', methods=['GET'])
-def get_report(user_id):
-    purchases = Purchase.query.filter_by(user_id=user_id).all()
-    total = sum(p.price_dz for p in purchases)
-    return jsonify({
-        "user_id": user_id,
-        "total_spent_dz": total,
-        "count": len(purchases)
-    })
-
-# ----------------- إرسال البريد -----------------
-def send_email(to_email, subject, body):
-    sender = "hhomebudget@gmail.com"  # ← ضع هنا بريدك
-    password = "homebudget123"        # ← كلمة مرور تطبيق Gmail (وليس العادية)
+def load_json(filename):
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
-            smtp.starttls()
-            smtp.login(sender, password)
-            msg = f"Subject: {subject}\n\n{body}"
-            smtp.sendmail(sender, to_email, msg)
-        print("📧 Email sent successfully!")
-    except Exception as e:
-        print("Error sending email:", e)
+        with open(filename, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+    except json.JSONDecodeError:
+        return []
 
-# ----------------- تقارير أسبوعية وشهرية -----------------
+def save_json(filename, data):
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+# ======= المستخدمين =======
+
+@app.route("/users", methods=["GET"])
+def get_users():
+    users = load_json(USERS_FILE)
+    return jsonify(users)
+
+@app.route("/add_user", methods=["POST"])
+def add_user():
+    new_user = request.json
+    if not new_user or "username" not in new_user or "password" not in new_user:
+        return jsonify({"error": "بيانات المستخدم غير صالحة"}), 400
+
+    users = load_json(USERS_FILE)
+    for user in users:
+        if user["username"] == new_user["username"]:
+            return jsonify({"error": "اسم المستخدم موجود بالفعل"}), 400
+
+    users.append(new_user)
+    save_json(USERS_FILE, users)
+    return jsonify({"message": "تمت إضافة المستخدم بنجاح"}), 200
+
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.json
+    if not data or "username" not in data or "password" not in data:
+        return jsonify({"error": "بيانات تسجيل الدخول ناقصة"}), 400
+
+    users = load_json(USERS_FILE)
+    for user in users:
+        if user["username"] == data["username"] and user["password"] == data["password"]:
+            return jsonify({"message": "تسجيل الدخول ناجح"}), 200
+
+    return jsonify({"error": "اسم المستخدم أو كلمة المرور غير صحيحة"}), 401
+
+# ======= المصاريف =======
+
+@app.route("/add_expense", methods=["POST"])
+def add_expense():
+    expense = request.json
+    if not expense or "amount" not in expense or "description" not in expense:
+        return jsonify({"error": "بيانات المصروف غير صالحة"}), 400
+
+    expenses = load_json(EXPENSES_FILE)
+    expense["date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    expenses.append(expense)
+    save_json(EXPENSES_FILE, expenses)
+    return jsonify({"message": "تمت إضافة المصروف"}), 200
+
+@app.route("/expenses", methods=["GET"])
+def get_expenses():
+    return jsonify(load_json(EXPENSES_FILE))
+
+# ======= التقارير التلقائية =======
+
 def weekly_report():
-    users = User.query.all()
-    for u in users:
-        purchases = Purchase.query.filter_by(user_id=u.id).all()
-        total = sum(p.price_dz for p in purchases)
-        send_email(u.email, "تقرير المصاريف الأسبوعي",
-                   f"مجموع مصاريفك هذا الأسبوع: {total} د.ج")
+    expenses = load_json(EXPENSES_FILE)
+    total = sum(float(e["amount"]) for e in expenses)
+    print(f"[تقرير أسبوعي] مجموع المصاريف حتى الآن: {total} د.ج")
 
 def run_scheduler():
     schedule.every().sunday.at("20:00").do(weekly_report)
@@ -94,10 +91,8 @@ def run_scheduler():
         schedule.run_pending()
         time.sleep(60)
 
-threading.Thread(target=run_scheduler, daemon=True).start()
+# ======= بدء السيرفر =======
 
-# ----------------- تشغيل السيرفر -----------------
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    app.run(host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    threading.Thread(target=run_scheduler, daemon=True).start()
+    app.run(host="0.0.0.0", port=5000)
